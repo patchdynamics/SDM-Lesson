@@ -52,18 +52,6 @@ head(species.occurence$gbif$data[[1]]$occurrenceRemarks)
 head(species.occurence$gbif$data[[1]]$type, 20)
 head(species.occurence$gbif$data[[1]]$collectionCode, 20)
 
-# save data locally so you don't have to query the internet every time
-### Remove to Detailed
-save(species.occurence, file='species.occurence.Rdata')
-
-# load from the file instead of from the web
-### Remove to Detailed
-load('species.occurence.Rdata')
-
-# optionally export to spreadsheet for visualize cleaning / analysis
-### Remove to Detailed
-write.csv(species.occurence$bison$data[[1]], file='my_occurences.gbif.csv')
-write.csv(species.occurence$bison$data[[1]], file='my_occurences.bison.csv')
 
 # Save occurence data to a shapefile so we can explore it in QGIS
 # We are just going to use results from BISON database for now
@@ -73,40 +61,16 @@ coordinates(occurences) = c('longitude', 'latitude')
 crs(occurences) = CRS("+init=epsg:4326")  # 4326 is WGS84, the standard lat/lon coordinate system
 shapefile(occurences, 'GIS/occurences', overwrite=TRUE)
 
-# Check out the BioClim layers now..
-# Then In QGIS create the project area
+# Might want to compare to the BioClim layers now..
 
+# Then In QGIS create the project area and load into
 project.area = shapefile('GIS/ProjectAreaArborimus.shp')
 
 
-# You could also load only occurence points matching your project area
-### Remove to Details file
-wkt = writeWKT(project.area)   # this converts the shape into the Well Known Text format
-species.occurence = occ(query = "Arborimus longicaudus", 
-                        geometry=wkt,
-                        from = c("gbif", "bison", "ecoengine", "inat"),
-                        has_coords = TRUE,
-                        limit = 1500)
-occurences.bison = species.occurence$bison$data[[1]]
-occurences = occurences.bison[!is.na(occurences.bison$latitude) & !(occurences.bison$latitude == 0),]  # here we filter out records with missing coordinates
-coordinates(occurences) = c('longitude', 'latitude')
-crs(occurences) = CRS("+init=epsg:4326")  # 4326 is WGS84, the standard lat/lon coordinate system
-shapefile(occurences, 'occurences_project')
-
-
 # Loading BioClim data
-# this can happen a few ways
-# 1) Load directly into R using the methods Giuseppe demo'd.  To do this you should know coordinates
-# within each time that you need
-#
-# bioclim = getData('worldclim' , var='bio' , res=0.5, lon=-40, lat=-15 ) 
-#
-# 2) Download the entire BioClim data set manually http://www.worldclim.org/tiles.php
-# and then clip to your region
-# We'll use this method for clarity.
-
-
-
+# this can happen a few ways.  For clarity, we will download the entire BioClim 
+# data set manually http://www.worldclim.org/tiles.php and clip to our area
+ 
 
 # Now we load all the bioclim data into a RasterStack
 bioclim = stack('GIS/bio_11/bio1_11.tif', 'GIS/bio_11/bio2_11.tif', 'GIS/bio_11/bio3_11.tif',
@@ -121,6 +85,7 @@ names(bioclim)  # see what to call the layers
 # plot one layer
 par(mfrow=c(1,1))
 plot(bioclim$bio1_11) 
+lines(project.area)
 
 # plot all (first 16) layers
 plot(bioclim)
@@ -129,12 +94,9 @@ plot(bioclim)
 bioclim.local = crop(bioclim, project.area)
 plot(bioclim.local)
 
-# save the raster stack as a brick
-writeRaster(bioclim.local, 'GIS/bioclim.Arborimus.local.tiff', overwrite=TRUE)
-# or write out as individual files
+
+# write out raster stackas individual files
 writeRaster(bioclim.local, 'GIS/bioclim.Arborimus.local.tiff', bylayer=TRUE, overwrite=TRUE)
-
-
 
 
 # first we must resample our occurence data to deal with sampling bias
@@ -158,7 +120,7 @@ points(occurences.resampled, pch=1, col='red')
 
 
 # let's save this as a shapefile so we can have a closer look
-shapefile(occurences.resampled, 'occurences_resampled', overwrite=TRUE)
+shapefile(occurences.resampled, 'GIS/occurences_resampled', overwrite=TRUE)
 
 
 #
@@ -181,46 +143,27 @@ points(training.locations, pch=1, col='red')
 # prepare the data for predictions
 presence.predictors = raster::extract(predictors, presence.locations )  # extract values from rasters for each point
 presence.predictors = as.data.frame(presence.predictors)   # change to data frame object just because             
-
-present = rep(1, nrow(presence.predictors ))   # a column of ones identifies these as the values for presence
-presence.predictors = cbind(present, presence.predictors)  # assemble the complete matrix
 head(presence.predictors)  # take look for understanding
 
-
-# with presence and background (pseudo-absence) values
-# first the presense values as before
-predictors = bioclim.local                      # rename variables for simplicity
-presence.locations = occurences.resampled 
-
-presence.predictors = raster::extract(predictors, presence.locations )  # extract values from rasters for each point
-presence.predictors = as.data.frame(presence.predictors)   # change to data frame object just because             
-
-# now get background values
+# now get background (pseudo-absence) values
 background.points = randomPoints(project.area.raster, 500)
 background.predictors = extract(predictors, background.points)
 present.or.background = c(rep(1, nrow(presence.predictors)), rep(0, nrow(background.predictors)))
 presence.background.predictors = cbind(present.or.background, rbind(presence.predictors, background.predictors)  )
 head(presence.background.predictors)  # take a look 
+tail(presence.background.predictors)
 
 # because we are on the coast, some of our random points could have fallen in the water
 presence.background.predictors = presence.background.predictors[!is.na(presence.background.predictors$bio1_11),]
 
-# now we can think about this as a logistic regression
-# one might check graphs for logistic response, for instance
-plot(presence.background.predictors$bio1_11, presence.background.predictors$present)
-plot(presence.background.predictors$bio2_11, presence.background.predictors$present)
-plot(presence.background.predictors$bio3_11, presence.background.predictors$present)
-plot(presence.background.predictors$bio4_11, presence.background.predictors$present)
-plot(presence.background.predictors$bio5_11, presence.background.predictors$present)
-plot(presence.background.predictors$bio6_11, presence.background.predictors$present)
-
 
 # and see if we can get a good prediction, by setting up a formula that makes sense
-formula = present.or.background ~ bio6_11 + bio4_11  # be selective
-#formula = present.or.background ~ .   # or just rhow in the kitchen sink (but might suffer from correlated predictors)
+formula = present.or.background ~ bio6_11 + bio9_11  # be selective
+formula = present.or.background ~ .   # or just throw in the kitchen sink (but might suffer from correlated predictors)
 
 # compute the model and check the AIC
-glm.model = glm(formula, data = presence.background.predictors, family=binomial(link = logit))  # family=binomial(link = logit) makes this a logistic regression
+# glm.model = glm(formula, data = presence.background.predictors, family=binomial(link = logit))  # family=binomial(link = logit) makes this a logistic regression
+glm.model = glm(formula, data = presence.background.predictors)
 summary(glm.model)  # we want to have the lowest AIC
 
 # compute the predicted distribution
@@ -255,12 +198,8 @@ points(occurences)
 writeRaster(bioclim.prediction, 'GIS/predictions/bioclim.prediction.tiff', overwrite=TRUE)
 
 
-#
-# these predictors didn't work very well
-# let's get some other data
-bbox(bioclim.local)  # use this to download other data from earthexplorer, worldgrids, etc.
 
-#
+# 
 # bring in an elevation layer
 #
 elevation = raster('GIS/DEMSRE2a.tif')
@@ -288,16 +227,6 @@ points(training.locations, pch=10, col='blue')
 points(occurences)
 
 writeRaster(glm.prediction, 'GIS/predictions/glm.prediction.elevation.2.tif', overwrite=TRUE)
-
-
-
-#
-# Hmm, was elevation really a good idea ?
-# maybe bringing in NLCD is going to help us
-#
-NLCD.local = raster('GIS/NLCD.local.tif')
-NLCD.local = projectRaster(NLCD.local, predictors)
-stack(predictors, NLCD.local)  # etc...
 
 
 
